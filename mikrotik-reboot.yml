@@ -1,6 +1,0 @@
-- name: Reboot MikroTik Router
-  hosts: mikrotik
-  gather_facts: no
-  tasks:
-    - name: Run reboot command via SSH
-      ansible.builtin.shell: ssh {{ ansible_user }}@{{ ansible_host }} "/system reboot"
