@@ -1,14 +1,15 @@
 ---
-- name: Reboot MikroTik Router
-  hosts: mikrotik
+- name: Reboot MikroTik via SSH
+  hosts: all
   gather_facts: no
-  connection: ansible.netcommon.network_cli
+  vars:
+    mikrotik_ip: "192.168.242.20"
+    mikrotik_user: "ansible"
+    mikrotik_pass: "JVqMuMqGfTSj6dW0"
 
   tasks:
-    - name: Reboot the device
-      community.routeros_command:
-        commands: "/system reboot"
-        username: "ansible"
-        password: "JVqMuMqGfTSj6dW0"
+    - name: Reboot MikroTik
+      ansible.builtin.command: >
+        sshpass -p "{{ mikrotik_pass }}" ssh -o StrictHostKeyChecking=no {{ mikrotik_user }}@{{ mikrotik_ip }} "/system reboot"
       delegate_to: localhost
-      ignore_errors: yes  # MikroTik immediately terminates the connection
+      ignore_errors: yes
