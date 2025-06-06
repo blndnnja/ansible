@@ -1,57 +1,78 @@
 ---
-- hosts: mikrotik
+- name: Backup MikroTik Routers
+  hosts: mikrotik
   gather_facts: no
+  vars:
+    ssh_args: >-
+      -o HostKeyAlgorithms=+ssh-dss,ssh-rsa
+      -o KexAlgorithms=+diffie-hellman-group14-sha1
+      -o StrictHostKeyChecking=no
+    backup_dir: "/opt/mikrotik_backups"
+    backup_retention_days: 30
+
   tasks:
+    - name: Create backup directory
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
 
-    - name: Set ssh port (set defualt 22 port when port is not defined)
-      set_fact:
-        ansible_port: "{{ ansible_port | default(22) }}"
+    - name: Generate backup filename with timestamp
+      ansible.builtin.set_fact:
+        backup_file: "{{ backup_dir }}/{{ ansible_host }}_{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}.backup"
+      delegate_to: localhost
 
-    - name: Run backup with password (when password is defined)
-      when: ansible_ssh_pass is defined
-      block:
+    - name: Export full configuration
+      ansible.builtin.command: >
+        sshpass -p "{{ ansible_password }}" ssh {{ ssh_args }}
+        {{ ansible_user }}@{{ ansible_host }} "/export file={{ ansible_host }}"
+      delegate_to: localhost
+      register: export_result
+      changed_when: export_result.rc == 0
 
-      - name: Ensure that sshpass is installed
-        ansible.builtin.shell: whereis sshpass | awk '{print $2}'
-        run_once: yes
-        register: sshpass
-        delegate_to: localhost
+    - name: Download backup file
+      ansible.builtin.command: >
+        sshpass -p "{{ ansible_password }}" scp {{ ssh_args }}
+        {{ ansible_user }}@{{ ansible_host }}:{{ ansible_host }}.rsc "{{ backup_file }}"
+      delegate_to: localhost
+      register: download_result
+      when: export_result.rc == 0
 
-      - ansible.builtin.fail:
-          msg: >-
-            Playbook requrie sshpass to use password authenication, please install
-            sshpass and re-run same playbook again. 
-            You can found details in https://www.redhat.com/sysadmin/ssh-automation-sshpass
-        when: sshpass.stdout|length == 0
+    - name: Clean up remote export file
+      ansible.builtin.command: >
+        sshpass -p "{{ ansible_password }}" ssh {{ ssh_args }}
+        {{ ansible_user }}@{{ ansible_host }} "/file remove {{ ansible_host }}.rsc"
+      delegate_to: localhost
+      when: export_result.rc == 0
+      ignore_errors: yes
 
-      - name: gather export (with password authentication)
-        # shell with delegate_to: localhost works better that ansible.builtin.raw  
-        ansible.builtin.shell: >-
-          sshpass -p '{{ ansible_ssh_pass }}' ssh -o StrictHostKeyChecking=no {{ ansible_user }}@{{ inventory_hostname }} -p {{ ansible_port }} /export
-        register: export
-        delegate_to: localhost
+    - name: Create binary backup (optional)
+      ansible.builtin.command: >
+        sshpass -p "{{ ansible_password }}" ssh {{ ssh_args }}
+        {{ ansible_user }}@{{ ansible_host }} "/system backup save name={{ ansible_host }}"
+      delegate_to: localhost
+      when: backup_binary | default(false) | bool
 
-      - name: store export to local file
-        ansible.builtin.copy:
-          content: "{{ export.stdout }}"
-          dest: "output/{{ inventory_hostname }}.config"
-        when: export is defined
-        delegate_to: localhost
+    - name: Clean up old backups (local)
+      ansible.builtin.find:
+        paths: "{{ backup_dir }}"
+        patterns: "{{ ansible_host }}_*.backup"
+        age: "{{ backup_retention_days }}d"
+      delegate_to: localhost
+      register: old_backups
 
-    - name: Run backup withot password (when password is not defined)
-      when: ansible_ssh_pass is not defined
-      block:
+    - name: Remove old backups
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      delegate_to: localhost
+      loop: "{{ old_backups.files }}"
+      when: old_backups.matched > 0
 
-      - name: gather export (with passwordless authentication)
-        # shell with delegate_to: localhost works better that ansible.builtin.raw  
-        ansible.builtin.shell: >-
-          ssh {{ ansible_user }}@{{ inventory_hostname }} -p {{ ansible_port }} /export
-        register: export
-        delegate_to: localhost
-
-      - name: store export to local file
-        ansible.builtin.copy:
-          content: "{{ export.stdout }}"
-          dest: "output/{{ inventory_hostname }}.config"
-        when: export is defined
-        delegate_to: localhost
+    - name: Show backup status
+      ansible.builtin.debug:
+        msg: >
+          Backup {{ 'succeeded' if download_result.rc == 0 else 'failed' }}
+          for {{ ansible_host }} at {{ backup_file }}
