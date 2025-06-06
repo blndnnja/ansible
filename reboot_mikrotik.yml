@@ -1,10 +1,6 @@
 ---
 - name: Reboot MikroTik via SSH
-  hosts: localhost
-  vars:
-    mikrotik_ip: "192.168.242.20"
-    mikrotik_user: "ansible"
-    mikrotik_pass: "JVqMuMqGfTSj6dW0"
+  hosts: mikrotik
 
   tasks:
     - name: Reboot MikroTik
