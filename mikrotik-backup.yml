@@ -1,5 +1,5 @@
 ---
-- name: Backup MikroTik Routers
+- name: Backup MikroTik Routers with Identity-Based Naming
   hosts: mikrotik
   gather_facts: no
   vars:
@@ -7,20 +7,10 @@
       -o HostKeyAlgorithms=+ssh-dss,ssh-rsa
       -o KexAlgorithms=+diffie-hellman-group14-sha1
       -o StrictHostKeyChecking=no
-      -o ConnectTimeout=10
     backup_dir: "/opt/mikrotik_backups"
-    backup_retention_days: 7
+    backup_retention_days: 30
 
   tasks:
-    - name: Verify connectivity
-      ansible.builtin.command: >
-        sshpass -p "{{ ansible_password }}" ssh {{ ssh_args }}
-        {{ ansible_user }}@{{ ansible_host }} "/system resource print"
-      delegate_to: localhost
-      register: connection_test
-      ignore_errors: yes
-      changed_when: false
-
     - name: Create backup directory
       ansible.builtin.file:
         path: "{{ backup_dir }}"
@@ -29,56 +19,78 @@
       delegate_to: localhost
       run_once: true
 
-    - name: Get device identity
+    - name: Get MikroTik identity name
       ansible.builtin.command: >
         sshpass -p "{{ ansible_password }}" ssh {{ ssh_args }}
         {{ ansible_user }}@{{ ansible_host }} "/system identity print"
       delegate_to: localhost
-      register: identity
-      when: connection_test.rc == 0
+      register: identity_output
       changed_when: false
+
+    - name: Extract device name
+      ansible.builtin.set_fact:
+        device_name: "{{ identity_output.stdout_lines[0].split(':')[1] | trim }}"
+      when: identity_output.rc == 0
+
+    - name: Generate timestamp
+      ansible.builtin.set_fact:
+        backup_timestamp: "{{ lookup('pipe', 'date +%Y-%m-%d_%H-%M-%S') }}"
 
     - name: Set backup filename
       ansible.builtin.set_fact:
-        device_name: "{{ identity.stdout_lines[0].split(':')[1] | trim | regex_replace(' ', '_') }}"
-        backup_file: "{{ backup_dir }}/{{ device_name }}_{{ lookup('pipe', 'date +%Y-%m-%d_%H%M%S') }}.rsc"
-      when: connection_test.rc == 0
+        backup_file: "{{ backup_dir }}/{{ device_name | default(ansible_host) }}_{{ backup_timestamp }}.rsc"
       delegate_to: localhost
 
     - name: Export configuration
       ansible.builtin.command: >
         sshpass -p "{{ ansible_password }}" ssh {{ ssh_args }}
-        {{ ansible_user }}@{{ ansible_host }} "/export file={{ device_name }}"
+        {{ ansible_user }}@{{ ansible_host }} "/export file={{ device_name | default(ansible_host) }}"
       delegate_to: localhost
-      when: connection_test.rc == 0
-      register: export
-      retries: 2
-      delay: 5
-      until: export.rc == 0
+      register: export_result
 
-    - name: Download backup
+    - name: Download configuration
       ansible.builtin.command: >
         sshpass -p "{{ ansible_password }}" scp {{ ssh_args }}
-        {{ ansible_user }}@{{ ansible_host }}:{{ device_name }}.rsc "{{ backup_file }}"
+        {{ ansible_user }}@{{ ansible_host }}:{{ device_name | default(ansible_host) }}.rsc "{{ backup_file }}"
       delegate_to: localhost
-      when: export.rc == 0
-      register: download
+      when: export_result.rc == 0
+      register: download_result
 
-    - name: Cleanup remote file
+    - name: Verify backup
+      ansible.builtin.stat:
+        path: "{{ backup_file }}"
+      delegate_to: localhost
+      register: backup_verify
+
+    - name: Cleanup remote export
       ansible.builtin.command: >
         sshpass -p "{{ ansible_password }}" ssh {{ ssh_args }}
-        {{ ansible_user }}@{{ ansible_host }} "/file remove {{ device_name }}.rsc"
+        {{ ansible_user }}@{{ ansible_host }} "/file remove {{ device_name | default(ansible_host) }}.rsc"
       delegate_to: localhost
-      when: export.rc == 0
-      ignore_errors: yes
+      when: export_result.rc == 0
 
-    - name: Show backup status
+    - name: Backup confirmation
       ansible.builtin.debug:
         msg: >
-          {% if connection_test.rc != 0 %}
-          {{ ansible_host }} - Connection failed!
-          {% elif download.rc == 0 %}
-          {{ device_name }} - Backup saved to {{ backup_file }}
+          Backup of {{ device_name | default(ansible_host) }}
+          {% if backup_verify.stat.exists %}
+          succeeded: {{ backup_file }} ({{ backup_verify.stat.size | filesizeformat }})
           {% else %}
-          {{ device_name }} - Backup failed during transfer
+          failed! Check connection/credentials.
           {% endif %}
+
+    - name: Purge old backups
+      ansible.builtin.find:
+        paths: "{{ backup_dir }}"
+        patterns: "{{ device_name | default(ansible_host) }}_*.rsc"
+        age: "{{ backup_retention_days }}d"
+      delegate_to: localhost
+      register: old_backups
+
+    - name: Remove expired backups
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      delegate_to: localhost
+      loop: "{{ old_backups.files }}"
+      when: old_backups.matched > 0
