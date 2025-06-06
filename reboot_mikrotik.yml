@@ -1,12 +1,8 @@
 ---
-- name: Reboot MikroTik
+- name: Reboot MikroTik via raw SSH
   hosts: mikrotik
-  collections:
-    - routeros  # Explicitly declare the collection
   tasks:
-    - name: Reboot device
-      routeros_command:
-        commands: "/system reboot"
-        username: "{{ ansible_user }}"
-        password: "{{ ansible_password }}"
+    - name: Send reboot command
+      ansible.builtin.raw: |
+        sshpass -p "{{ mikrotik_pass }}" ssh -o StrictHostKeyChecking=no {{ mikrotik_user }}@{{ mikrotik_ip }} "/system reboot"
       ignore_errors: yes
