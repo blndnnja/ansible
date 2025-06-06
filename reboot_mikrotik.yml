@@ -1,15 +1,15 @@
 ---
 - name: Reboot MikroTik via SSH
-  hosts: mikrotik
+  hosts: all
+  gather_facts: no
+  vars:
+    mikrotik_ip: "192.168.242.20"
+    mikrotik_user: "ansible"
+    mikrotik_pass: "JVqMuMqGfTSj6dW0"
 
   tasks:
     - name: Reboot MikroTik
       ansible.builtin.command: >
-        sshpass -p "{{ mikrotik_pass }}" ssh
-        -o HostKeyAlgorithms=ssh-rsa,ssh-dss
-        -o KexAlgorithms=diffie-hellman-group14-sha1
-        -o Ciphers=aes128-ctr,aes192-ctr,aes256-ctr
-        -o StrictHostKeyChecking=no
-        {{ mikrotik_user }}@{{ mikrotik_ip }} "/system reboot"
+        sshpass -p "{{ mikrotik_pass }}" ssh -o StrictHostKeyChecking=no {{ mikrotik_user }}@{{ mikrotik_ip }} "/system reboot"
       delegate_to: localhost
       ignore_errors: yes
