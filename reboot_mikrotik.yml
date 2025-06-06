@@ -2,7 +2,7 @@
 - name: Reboot MikroTik
   hosts: mikrotik
   collections:
-    - community.routeros  # Explicitly declare the collection
+    - routeros  # Explicitly declare the collection
   tasks:
     - name: Reboot device
       routeros_command:
