@@ -1,0 +1,14 @@
+---
+- name: Reboot MikroTik Router
+  hosts: mikrotik
+  gather_facts: no
+  connection: ansible.netcommon.network_cli
+
+  tasks:
+    - name: Reboot the device
+      community.routeros.routeros_command:
+        commands: "/system reboot"
+        username: "ansible"
+        password: "JVqMuMqGfTSj6dW0"
+      delegate_to: localhost
+      ignore_errors: yes  # MikroTik immediately terminates the connection
