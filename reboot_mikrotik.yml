@@ -1,17 +1,22 @@
-- name: Reboot MikroTik via SSH
-  hosts: localhost
+---
+- name: Reboot MikroTik routers
+  hosts: mikrotik
+  gather_facts: no  # Disable fact gathering
   vars:
-    mikrotik_ip: "192.168.242.20"
-    mikrotik_user: "ansible"
-    mikrotik_pass: "JVqMuMqGfTSj6dW0"
+    ssh_args: >-
+      -o HostKeyAlgorithms=+ssh-dss,ssh-rsa
+      -o KexAlgorithms=+diffie-hellman-group14-sha1
+      -o StrictHostKeyChecking=no
 
   tasks:
-    - name: Reboot MikroTik
+    - name: Reboot device
       ansible.builtin.command: >
-        sshpass -p "{{ mikrotik_pass }}" ssh
-        -o HostKeyAlgorithms=ssh-dss,ssh-rsa
-        -o KexAlgorithms=diffie-hellman-group14-sha1
-        -o StrictHostKeyChecking=no
-        {{ mikrotik_user }}@{{ mikrotik_ip }} "/system reboot"
+        sshpass -p "{{ ansible_password }}" ssh {{ ssh_args }}
+        {{ ansible_user }}@{{ ansible_host }} "/system reboot"
       delegate_to: localhost
       ignore_errors: yes
+      register: reboot_result
+
+    - name: Show reboot status
+      ansible.builtin.debug:
+        var: reboot_result
