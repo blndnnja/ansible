@@ -1,5 +1,5 @@
 ---
-- name: Backup MikroTik Routers
+- name: Backup MikroTik Routers with Identity-Based Naming
   hosts: mikrotik
   gather_facts: no
   vars:
@@ -19,60 +19,78 @@
       delegate_to: localhost
       run_once: true
 
-    - name: Generate backup filename with timestamp
-      ansible.builtin.set_fact:
-        backup_file: "{{ backup_dir }}/{{ ansible_host }}_{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}.backup"
-      delegate_to: localhost
-
-    - name: Export full configuration
+    - name: Get MikroTik identity name
       ansible.builtin.command: >
         sshpass -p "{{ ansible_password }}" ssh {{ ssh_args }}
-        {{ ansible_user }}@{{ ansible_host }} "/export file={{ ansible_host }}"
+        {{ ansible_user }}@{{ ansible_host }} "/system identity print"
+      delegate_to: localhost
+      register: identity_output
+      changed_when: false
+
+    - name: Extract device name
+      ansible.builtin.set_fact:
+        device_name: "{{ identity_output.stdout_lines[0].split(':')[1] | trim }}"
+      when: identity_output.rc == 0
+
+    - name: Generate timestamp
+      ansible.builtin.set_fact:
+        backup_timestamp: "{{ lookup('pipe', 'date +%Y-%m-%d_%H-%M-%S') }}"
+
+    - name: Set backup filename
+      ansible.builtin.set_fact:
+        backup_file: "{{ backup_dir }}/{{ device_name | default(ansible_host) }}_{{ backup_timestamp }}.rsc"
+      delegate_to: localhost
+
+    - name: Export configuration
+      ansible.builtin.command: >
+        sshpass -p "{{ ansible_password }}" ssh {{ ssh_args }}
+        {{ ansible_user }}@{{ ansible_host }} "/export file={{ device_name | default(ansible_host) }}"
       delegate_to: localhost
       register: export_result
-      changed_when: export_result.rc == 0
 
-    - name: Download backup file
+    - name: Download configuration
       ansible.builtin.command: >
         sshpass -p "{{ ansible_password }}" scp {{ ssh_args }}
-        {{ ansible_user }}@{{ ansible_host }}:{{ ansible_host }}.rsc "{{ backup_file }}"
+        {{ ansible_user }}@{{ ansible_host }}:{{ device_name | default(ansible_host) }}.rsc "{{ backup_file }}"
       delegate_to: localhost
+      when: export_result.rc == 0
       register: download_result
-      when: export_result.rc == 0
 
-    - name: Clean up remote export file
+    - name: Verify backup
+      ansible.builtin.stat:
+        path: "{{ backup_file }}"
+      delegate_to: localhost
+      register: backup_verify
+
+    - name: Cleanup remote export
       ansible.builtin.command: >
         sshpass -p "{{ ansible_password }}" ssh {{ ssh_args }}
-        {{ ansible_user }}@{{ ansible_host }} "/file remove {{ ansible_host }}.rsc"
+        {{ ansible_user }}@{{ ansible_host }} "/file remove {{ device_name | default(ansible_host) }}.rsc"
       delegate_to: localhost
       when: export_result.rc == 0
-      ignore_errors: yes
 
-    - name: Create binary backup (optional)
-      ansible.builtin.command: >
-        sshpass -p "{{ ansible_password }}" ssh {{ ssh_args }}
-        {{ ansible_user }}@{{ ansible_host }} "/system backup save name={{ ansible_host }}"
-      delegate_to: localhost
-      when: backup_binary | default(false) | bool
+    - name: Backup confirmation
+      ansible.builtin.debug:
+        msg: >
+          Backup of {{ device_name | default(ansible_host) }}
+          {% if backup_verify.stat.exists %}
+          succeeded: {{ backup_file }} ({{ backup_verify.stat.size | filesizeformat }})
+          {% else %}
+          failed! Check connection/credentials.
+          {% endif %}
 
-    - name: Clean up old backups (local)
+    - name: Purge old backups
       ansible.builtin.find:
         paths: "{{ backup_dir }}"
-        patterns: "{{ ansible_host }}_*.backup"
+        patterns: "{{ device_name | default(ansible_host) }}_*.rsc"
         age: "{{ backup_retention_days }}d"
       delegate_to: localhost
       register: old_backups
 
-    - name: Remove old backups
+    - name: Remove expired backups
       ansible.builtin.file:
         path: "{{ item.path }}"
         state: absent
       delegate_to: localhost
       loop: "{{ old_backups.files }}"
       when: old_backups.matched > 0
-
-    - name: Show backup status
-      ansible.builtin.debug:
-        msg: >
-          Backup {{ 'succeeded' if download_result.rc == 0 else 'failed' }}
-          for {{ ansible_host }} at {{ backup_file }}
