@@ -1,7 +1,6 @@
 ---
-- name: Reboot MikroTik via SSH
-  hosts: all
-  gather_facts: no
+- name: Reboot MikroTik via API
+  hosts: localhost
   vars:
     mikrotik_ip: "192.168.242.20"
     mikrotik_user: "ansible"
@@ -9,7 +8,11 @@
 
   tasks:
     - name: Reboot MikroTik
-      ansible.builtin.command: >
-        sshpass -p "{{ mikrotik_pass }}" ssh -o StrictHostKeyChecking=no {{ mikrotik_user }}@{{ mikrotik_ip }} "/system reboot"
-      delegate_to: localhost
+      uri:
+        url: "https://{{ mikrotik_ip }}/rest/system/reboot"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_pass }}"
+        validate_certs: no  # Only for testing with self-signed certs
+        force_basic_auth: yes
       ignore_errors: yes
