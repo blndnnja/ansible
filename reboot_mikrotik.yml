@@ -6,7 +6,7 @@
 
   tasks:
     - name: Reboot the device
-      community.routeros.routeros_command:
+      community.routeros_command:
         commands: "/system reboot"
         username: "ansible"
         password: "JVqMuMqGfTSj6dW0"
